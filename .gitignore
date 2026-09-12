@@ -3,7 +3,6 @@
 *.dll
 *.so
 *.dylib
-flux-tools
 
 # Test binary
 *.test

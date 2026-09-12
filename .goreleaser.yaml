@@ -1,0 +1,36 @@
+# goreleaser v2: multi-arch binaries. Released by .github/workflows/release.yml
+# on a v* tag; the Docker image is built by the same workflow, not by goreleaser.
+#
+# Local checks:
+#   make release-check     validate this config
+#   make release-snapshot  build every platform into dist/ without publishing
+version: 2
+
+project_name: flux-tools
+
+builds:
+  - main: ./cmd/flux-tools
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/alexandervidyaev/flux-tools/internal/cli.version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  disable: true

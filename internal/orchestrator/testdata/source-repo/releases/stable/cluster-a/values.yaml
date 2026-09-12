@@ -1,0 +1,9 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kargo
+  namespace: kargo
+spec:
+  values:
+    api:
+      host: kargo.cluster-a.example.com

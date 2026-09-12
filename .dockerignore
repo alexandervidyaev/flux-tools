@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+.github
+
+# Documentation
+README.md
+*.md
+docs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+flux-tools
+*.exe
+*.dll
+*.so
+*.dylib
+dist/
+build/
+
+# Test files
+*_test.go
+testdata/
+
+# CI/CD
+.gitlab-ci.yml
+.travis.yml
+
+# Examples
+examples/
+.ci-example-bash.sh
+
+# Kubernetes manifests
+cluster-manifests/
+*.yaml
+*.yml
+
+# Temp files
+tmp/
+temp/
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db

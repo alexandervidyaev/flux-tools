@@ -1,0 +1,28 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: sample
+  namespace: sample
+spec:
+  type: oci
+  interval: 168h
+  url: oci://example.invalid/sample-charts
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: sample
+  namespace: sample
+spec:
+  chart:
+    spec:
+      chart: sample
+      version: '1.0.0'
+      sourceRef:
+        kind: HelmRepository
+        name: sample
+  interval: 168h
+  values:
+    replicas: 1

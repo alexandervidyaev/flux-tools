@@ -24,6 +24,7 @@ type CommandRunner interface {
 
 // RealRunner executes commands via os/exec.
 type RealRunner struct {
+	Dir string
 	Env []string // Additional environment variables.
 }
 
@@ -33,6 +34,7 @@ func (r *RealRunner) Run(ctx context.Context, name string, args ...string) ([]by
 
 func (r *RealRunner) RunWithStdin(ctx context.Context, stdin io.Reader, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = r.Dir
 	if len(r.Env) > 0 {
 		cmd.Env = append(os.Environ(), r.Env...)
 	}

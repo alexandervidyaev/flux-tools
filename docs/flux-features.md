@@ -15,3 +15,7 @@
 | `HelmRelease` `disableSchemaValidation` | passed to `helm template` |
 
 ---
+
+The additional `render` command uses Flux CLI for Kustomization transformations
+and resolves OCIRepository/ArtifactGenerator sources. Its requirements and
+limits are described in [OCI render and live diff](oci-render.md).

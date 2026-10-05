@@ -216,3 +216,10 @@ func splitPath(path string) []string {
 	}
 	return parts
 }
+
+func (vb *ValuesBuilder) AddConfigMap(namespace, name string, data map[string]string) {
+	vb.configMaps[types.GetObjectKey(namespace, name)] = data
+}
+func (vb *ValuesBuilder) AddSecret(namespace, name string, data map[string]string) {
+	vb.secrets[types.GetObjectKey(namespace, name)] = data
+}

@@ -81,6 +81,9 @@ The full walkthrough, with caching between pipelines and the diff baseline for a
 | `yq` | Run yq over every rendered file in parallel, writing to `cleaned/` instead of over the input |
 | `diff` | Compare two `build` results, native unified diff, per-cluster reports |
 | `post-comment` | Publish the diff to a GitLab merge request |
+| `render` | Render one artifact entry with Flux CLI transformations and OCI/ArtifactGenerator sources |
+| `diff-live` | Preview server-side differences using an explicit kubeconfig |
+| `kube login` | Obtain per-cluster kubeconfigs through Teleport tbot's GitLab join method |
 
 Every flag and default: [docs/commands.md](docs/commands.md).
 
@@ -91,6 +94,7 @@ Every flag and default: [docs/commands.md](docs/commands.md).
 - [CI pipeline](docs/ci-pipeline.md): the full flow, diff against the target branch
 - [Configuration](docs/configuration.md): caches and environment variables
 - [Supported Flux features](docs/flux-features.md)
+- [OCI render and live diff](docs/oci-render.md): optional Flux CLI, crane and cluster-access workflows
 - [AGENTS.md](AGENTS.md): architecture and contribution rules
 - [CHANGELOG.md](CHANGELOG.md)
 

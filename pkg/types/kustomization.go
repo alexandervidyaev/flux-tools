@@ -6,6 +6,7 @@ import (
 
 // Kustomization represents a Flux Kustomization resource
 type Kustomization struct {
+	RawObject  map[string]interface{} `json:"-"`
 	TypeMeta   `json:",inline"`
 	ObjectMeta `json:"metadata,omitempty"`
 	Spec       KustomizationSpec   `json:"spec,omitempty"`

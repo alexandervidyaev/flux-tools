@@ -139,6 +139,12 @@ func runDiff(ctx context.Context, currentDir string, incomingDir string, concurr
 	// Compare clusters in parallel
 	diffs := diff.CompareClustersParallel(ctx, clusters, currentTree, incomingTree, contextLines, concurrency)
 
+	for _, d := range diffs {
+		if d.Error != nil {
+			return fmt.Errorf("cluster %s: %w", d.ClusterName, d.Error)
+		}
+	}
+
 	// Output mode: files or console
 	if outputDir != "" {
 		// Save to separate files (Markdown format)

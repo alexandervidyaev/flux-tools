@@ -31,7 +31,9 @@ func (b *Builder) GetManifestCollection(ctx context.Context) (*manifest.Manifest
 
 	// Step 2: Parse Flux objects into collection
 	collection := manifest.NewManifestCollection()
-	b.parseFluxObjects(fluxObjects, collection)
+	if err := b.parseFluxObjects(fluxObjects, collection); err != nil {
+		return nil, err
+	}
 
 	b.printer.Verbose("Initial scan: Found %d Kustomizations, %d HelmReleases, %d HelmRepositories\n",
 		len(collection.Kustomizations), len(collection.HelmReleases), len(collection.HelmRepositories))

@@ -75,6 +75,9 @@ spec.path points at.`,
 	rootCmd.AddCommand(NewKubeconformCmd())
 	rootCmd.AddCommand(NewYqCmd())
 	rootCmd.AddCommand(NewDiffCmd())
+	rootCmd.AddCommand(NewRenderCmd())
+	rootCmd.AddCommand(NewLiveDiffCmd())
+	rootCmd.AddCommand(NewKubeCmd())
 	rootCmd.AddCommand(NewPostCommentCmd())
 
 	return rootCmd

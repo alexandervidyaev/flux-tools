@@ -3,6 +3,7 @@ package build
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/alexandervidyaev/flux-tools/pkg/kustomize"
 	"github.com/alexandervidyaev/flux-tools/pkg/manifest"
 	"github.com/alexandervidyaev/flux-tools/pkg/output"
+	"github.com/alexandervidyaev/flux-tools/pkg/source"
 	"github.com/alexandervidyaev/flux-tools/pkg/types"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
@@ -34,6 +36,8 @@ var StageOrder = []string{StageDiscovery, StageKustomize, StageHelm, StageFilter
 
 // BuildOptions contains options for building manifests
 type BuildOptions struct {
+	NativeFlux                 bool
+	LocalArtifacts, OCIRewrite map[string]string
 	// Path to the root directory to scan
 	Path string
 	// RootPath is the repository root that Kustomization spec.path and local
@@ -90,6 +94,7 @@ type BuildOptions struct {
 
 // Builder handles the build process
 type Builder struct {
+	sources          *source.Resolver
 	options          BuildOptions
 	printer          *output.Printer
 	kustomizeBuilder *kustomize.Builder
@@ -178,7 +183,15 @@ func NewBuilder(ctx context.Context, options BuildOptions) (*Builder, error) {
 	kustomizeBuilder := kustomize.NewBuilder()
 	kustomizeBuilder.SetSourceIgnore(ignore)
 
+	var sources *source.Resolver
+	if options.NativeFlux {
+		sources, err = source.New(ctx, rootPath, options.CacheDir, options.LocalArtifacts, options.OCIRewrite)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &Builder{
+		sources:          sources,
 		options:          options,
 		printer:          output.New(options.Verbose),
 		kustomizeBuilder: kustomizeBuilder,
@@ -256,7 +269,14 @@ func (b *Builder) resolveSourceRoot(ctx context.Context, ks *types.Kustomization
 	if ref.Name == "" {
 		return b.rootPath, nil
 	}
-	if ref.Kind != "GitRepository" {
+	if b.sources != nil && (ref.Kind == "OCIRepository" || ref.Kind == "ExternalArtifact") {
+		ns := ref.Namespace
+		if ns == "" {
+			ns = ks.Namespace
+		}
+		return b.sources.Resolve(ref.Kind, ns, ref.Name)
+	}
+	if ref.Kind != "GitRepository" && ref.Kind != "" {
 		return "", fmt.Errorf("unsupported sourceRef kind %q for Kustomization %s/%s", ref.Kind, ks.Namespace, ks.Name)
 	}
 	path, err := b.helmClient.ResolveGitSourcePath(ctx, ks.SourceRefKey())
@@ -299,7 +319,9 @@ func (b *Builder) BuildAll(ctx context.Context) ([]*unstructured.Unstructured, e
 
 	// Step 2: Parse initial Flux objects into collection
 	collection := manifest.NewManifestCollection()
-	b.parseFluxObjects(fluxObjects, collection)
+	if err := b.parseFluxObjects(fluxObjects, collection); err != nil {
+		return nil, err
+	}
 
 	b.printer.Verbose("Initial scan: Found %d Kustomizations, %d HelmReleases, %d HelmRepositories\n",
 		len(collection.Kustomizations), len(collection.HelmReleases), len(collection.HelmRepositories))
@@ -430,12 +452,19 @@ func (b *Builder) buildOrderedKustomizations(ctx context.Context, collection *ma
 	// Collect ConfigMaps from bootstrap path — these are available to all Kustomizations
 	// via substituteFrom without any dependsOn requirement.
 	configMaps := extractConfigMaps(fluxObjects)
+	secrets := extractSecrets(fluxObjects)
 
 	var allObjects []*unstructured.Unstructured
 	for _, ks := range orderedKustomizations {
 		b.printer.Verbose("Processing Kustomization: %s/%s\n", ks.Namespace, ks.Name)
 
 		vars := b.buildSubstitutionVars(ks, substitutionVars, configMaps)
+		if b.options.NativeFlux {
+			vars, err = b.substitutionVars(ctx, ks, configMaps, secrets)
+			if err != nil {
+				return nil, err
+			}
+		}
 
 		objects, err := b.processKustomization(ctx, ks, vars)
 		if err != nil {
@@ -447,6 +476,10 @@ func (b *Builder) buildOrderedKustomizations(ctx context.Context, collection *ma
 		// guaranteed, so later ones can safely reference these).
 		for k, v := range extractConfigMaps(objects) {
 			configMaps[k] = v
+		}
+
+		for k, v := range extractSecrets(objects) {
+			secrets[k] = v
 		}
 
 		// Store variables for dependent Kustomizations
@@ -464,6 +497,9 @@ func (b *Builder) buildOrderedKustomizations(ctx context.Context, collection *ma
 
 // processKustomization processes a single Kustomization
 func (b *Builder) processKustomization(ctx context.Context, ks *types.Kustomization, vars map[string]string) ([]*unstructured.Unstructured, error) {
+	if b.options.NativeFlux {
+		return b.processNativeKustomization(ctx, ks, vars)
+	}
 	if b.options.SkipOCI && ks.Spec.SourceRef.Kind == "OCIRepository" {
 		b.printer.Verbose("  Skipping Kustomization %s/%s: OCIRepository sourceRef not supported (--skip-oci)\n", ks.Namespace, ks.Name)
 		return []*unstructured.Unstructured{}, nil
@@ -598,6 +634,16 @@ func (b *Builder) processHelmReleases(ctx context.Context, collection *manifest.
 	b.registerGitRepositories(collection)
 	b.registerArtifactGenerators(collection)
 	helmReleaseObjects := b.resolveHelmReleaseObjects(collection, objects)
+	if b.options.NativeFlux {
+		for _, obj := range objects {
+			b.sources.Register(obj.Object)
+		}
+		inputs := append([]*unstructured.Unstructured{}, objects...)
+		if len(findHelmReleases(objects)) == 0 {
+			inputs = append(inputs, helmReleaseObjects...)
+		}
+		return b.templateNativeHelmReleases(ctx, inputs)
+	}
 	return b.templateHelmReleases(ctx, helmReleaseObjects)
 }
 
@@ -828,31 +874,46 @@ func isNamespacedResource(obj *unstructured.Unstructured) bool {
 }
 
 // parseFluxObjects parses Flux objects from a list of unstructured objects into a collection
-func (b *Builder) parseFluxObjects(objects []*unstructured.Unstructured, collection *manifest.ManifestCollection) {
+func (b *Builder) parseFluxObjects(objects []*unstructured.Unstructured, collection *manifest.ManifestCollection) error {
 	for _, obj := range objects {
+		if b.sources != nil {
+			b.sources.Register(obj.Object)
+		}
 		switch obj.GetKind() {
 		case "Kustomization":
 			if ks, ok := decodeFluxObject[types.Kustomization](b, obj, "kustomize.toolkit.fluxcd.io"); ok {
+				ks.RawObject = obj.Object
 				putIfAbsent(collection.Kustomizations, ks.GetKey(), ks)
+			} else if b.options.NativeFlux && strings.HasPrefix(obj.GetAPIVersion(), "kustomize.toolkit.fluxcd.io") {
+				return fmt.Errorf("invalid Kustomization %s/%s", obj.GetNamespace(), obj.GetName())
 			}
 		case "HelmRelease":
 			if hr, ok := decodeFluxObject[types.HelmRelease](b, obj, "helm.toolkit.fluxcd.io"); ok {
 				putIfAbsent(collection.HelmReleases, hr.GetKey(), hr)
+			} else if b.options.NativeFlux && strings.HasPrefix(obj.GetAPIVersion(), "helm.toolkit.fluxcd.io") {
+				return fmt.Errorf("invalid %s %s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName())
 			}
 		case "ArtifactGenerator":
 			if ag, ok := decodeFluxObject[types.ArtifactGenerator](b, obj, "source.extensions.fluxcd.io"); ok {
 				putIfAbsent(collection.ArtifactGenerators, ag.GetKey(), ag)
+			} else if b.options.NativeFlux && strings.HasPrefix(obj.GetAPIVersion(), "source.extensions.fluxcd.io") {
+				return fmt.Errorf("invalid %s %s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName())
 			}
 		case "HelmRepository":
 			if repo, ok := decodeFluxObject[types.HelmRepository](b, obj, "source.toolkit.fluxcd.io"); ok {
 				putIfAbsent(collection.HelmRepositories, repo.GetKey(), repo)
+			} else if b.options.NativeFlux && strings.HasPrefix(obj.GetAPIVersion(), "source.toolkit.fluxcd.io") {
+				return fmt.Errorf("invalid %s %s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName())
 			}
 		case "GitRepository":
 			if repo, ok := decodeFluxObject[types.GitRepository](b, obj, "source.toolkit.fluxcd.io"); ok {
 				putIfAbsent(collection.GitRepositories, repo.GetKey(), repo)
+			} else if b.options.NativeFlux && strings.HasPrefix(obj.GetAPIVersion(), "source.toolkit.fluxcd.io") {
+				return fmt.Errorf("invalid %s %s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName())
 			}
 		}
 	}
+	return nil
 }
 
 // decodeFluxObject converts a rendered object into its typed Flux resource.
@@ -872,8 +933,14 @@ func decodeFluxObject[T any](b *Builder, obj *unstructured.Unstructured, apiGrou
 	}
 
 	var out T
-	if err := yaml.Unmarshal(data, &out); err != nil {
-		b.printer.Verbose("  Warning: failed to unmarshal %s %s/%s: %v\n", kind, obj.GetNamespace(), obj.GetName(), err)
+	var decodeErr error
+	if b.options.NativeFlux {
+		decodeErr = json.Unmarshal(data, &out)
+	} else {
+		decodeErr = yaml.Unmarshal(data, &out)
+	}
+	if decodeErr != nil {
+		b.printer.Verbose("  Warning: failed to unmarshal %s %s/%s: %v\n", kind, obj.GetNamespace(), obj.GetName(), decodeErr)
 		return nil, false
 	}
 
@@ -949,12 +1016,15 @@ func (b *Builder) discoverNestedKustomizations(ctx context.Context, collection *
 		// Process each new Kustomization to discover nested ones
 		for _, ks := range newKustomizations {
 			// Determine build path
-			if ks.Spec.Path == "" {
+			if ks.Spec.Path == "" && !b.options.NativeFlux {
 				continue
 			}
 
 			buildPath, err := b.ResolveKustomizationBuildPath(ctx, ks)
 			if err != nil {
+				if b.options.NativeFlux {
+					return err
+				}
 				b.printer.Verbose("    Warning: failed to resolve build path for %s/%s: %v\n", ks.Namespace, ks.Name, err)
 				continue
 			}
@@ -965,6 +1035,9 @@ func (b *Builder) discoverNestedKustomizations(ctx context.Context, collection *
 			// render is cached and reused later by processKustomization.
 			objects, err := b.buildAndParseCached(ctx, buildPath)
 			if err != nil {
+				if b.options.NativeFlux {
+					return err
+				}
 				// Track the failure
 				ksKey := fmt.Sprintf("%s/%s", ks.Namespace, ks.Name)
 				buildFailures[ksKey] = err
@@ -976,7 +1049,9 @@ func (b *Builder) discoverNestedKustomizations(ctx context.Context, collection *
 
 			// Parse any new Kustomizations from the result
 			beforeCount := len(collection.Kustomizations)
-			b.parseFluxObjects(objects, collection)
+			if err := b.parseFluxObjects(objects, collection); err != nil {
+				return err
+			}
 			afterCount := len(collection.Kustomizations)
 
 			if afterCount > beforeCount {
@@ -1046,4 +1121,11 @@ func dedupeObjects(objects []*unstructured.Unstructured) ([]*unstructured.Unstru
 
 func objectIdentity(obj *unstructured.Unstructured) string {
 	return obj.GetAPIVersion() + "|" + obj.GetKind() + "|" + obj.GetNamespace() + "|" + obj.GetName()
+}
+
+func (b *Builder) Close() error {
+	if b.sources == nil {
+		return nil
+	}
+	return b.sources.Close()
 }

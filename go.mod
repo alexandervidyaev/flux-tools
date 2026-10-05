@@ -10,6 +10,8 @@ require (
 )
 
 require (
+	github.com/Masterminds/semver/v3 v3.3.0
+	github.com/bmatcuk/doublestar/v4 v4.6.1
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

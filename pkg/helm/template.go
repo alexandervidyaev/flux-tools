@@ -498,3 +498,7 @@ func (c *Client) writeValuesToTempFile(values map[string]interface{}) (string, e
 
 	return tmpFile.Name(), nil
 }
+
+func (c *Client) TemplateLocal(ctx context.Context, chartPath string, hr *types.HelmRelease, values map[string]interface{}) ([]*unstructured.Unstructured, error) {
+	return c.templateLocalChart(ctx, chartPath, templateOptions(hr, values))
+}

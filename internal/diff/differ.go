@@ -41,7 +41,8 @@ func CompareCluster(ctx context.Context, clusterName string, currentDir string, 
 			// File exists in both - check if modified
 			change, err := compareFiles(relPath, currentPath, incomingPath, contextLines)
 			if err != nil {
-				continue // Skip files we can't compare
+				result.Error = fmt.Errorf("failed to compare file %s: %w", relPath, err)
+				return result
 			}
 			if change != nil {
 				result.Changes = append(result.Changes, change)
